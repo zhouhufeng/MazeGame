@@ -1,0 +1,374 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maze Game</title>
+<style>
+  :root {
+    --wall: #2c3e50;
+    --floor: #ffffff;
+    --start: #2ecc71;
+    --goal: #e74c3c;
+    --player: #3498db;
+    --visited: #ffe3a3;
+    --frontier: #ffb347;
+    --path: #9b59b6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Comic Sans MS", "Segoe UI", system-ui, sans-serif;
+    margin: 0;
+    background: linear-gradient(135deg, #74b9ff 0%, #a29bfe 100%);
+    color: #2d3436;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px;
+  }
+  h1 { margin: 8px 0; color: #fff; text-shadow: 2px 2px 0 #00000033; font-size: 2rem; }
+  #status {
+    font-size: 1.2rem; font-weight: bold; min-height: 1.5em;
+    background: #ffffffcc; padding: 6px 16px; border-radius: 20px; margin-bottom: 8px;
+  }
+  #wrap { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; align-items: flex-start; }
+  canvas {
+    background: #fff; border-radius: 12px; box-shadow: 0 8px 24px #00000033;
+    touch-action: none; cursor: pointer;
+  }
+  .panel {
+    background: #ffffffee; border-radius: 12px; padding: 16px;
+    box-shadow: 0 8px 24px #00000022; max-width: 280px;
+  }
+  .panel h2 { margin: 4px 0 8px; font-size: 1.1rem; }
+  button {
+    font-family: inherit; font-size: 0.95rem; font-weight: bold;
+    border: none; border-radius: 10px; padding: 10px 14px; margin: 4px 2px;
+    cursor: pointer; color: #fff; background: #6c5ce7;
+    box-shadow: 0 3px 0 #00000033; transition: transform .05s;
+  }
+  button:active { transform: translateY(2px); box-shadow: 0 1px 0 #00000033; }
+  button.green { background: #00b894; }
+  button.red { background: #d63031; }
+  button.gray { background: #636e72; }
+  button.on { outline: 3px solid #fdcb6e; }
+  .row { margin: 8px 0; }
+  label { font-size: 0.9rem; display: block; margin: 6px 0 2px; }
+  input[type=range] { width: 100%; }
+  .tools button { font-size: 0.85rem; padding: 8px 10px; }
+  .legend { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; margin: 4px 0; }
+  .swatch { width: 16px; height: 16px; border-radius: 4px; border: 1px solid #00000022; }
+  .tip { font-size: 0.82rem; color: #555; line-height: 1.4; }
+  details { margin-top: 8px; }
+  summary { cursor: pointer; font-weight: bold; }
+</style>
+
+<h1>🧩 Maze Game</h1>
+<div id="status">Use the arrow keys to reach the red flag! 🏁</div>
+
+<div id="wrap">
+  <canvas id="cv" width="500" height="500"></canvas>
+
+  <div class="panel">
+    <h2>🎮 Play</h2>
+    <div class="tip">Move with <b>arrow keys</b> or <b>W A S D</b>. Get the blue dot to the red goal!</div>
+
+    <h2>🏗️ Make a maze</h2>
+    <button class="green" onclick="newMaze()">🎲 Random Maze</button>
+    <button class="gray" onclick="clearGrid()">🧽 Empty Grid</button>
+    <label>Maze size: <span id="sizeLabel">15</span></label>
+    <input type="range" id="size" min="7" max="31" step="2" value="15" oninput="onSize()">
+
+    <h2>✏️ Draw your own</h2>
+    <div class="tip">Pick a tool, then click or drag on the maze.</div>
+    <div class="tools">
+      <button id="t-wall" class="on" onclick="setTool('wall')">🧱 Wall</button>
+      <button id="t-erase" onclick="setTool('erase')">⬜ Erase</button>
+      <button id="t-start" onclick="setTool('start')">🟢 Start</button>
+      <button id="t-goal" onclick="setTool('goal')">🔴 Goal</button>
+    </div>
+
+    <h2>🤖 Let the computer solve it</h2>
+    <button class="red" onclick="solve('bfs')">🌊 Flood Fill (BFS)</button>
+    <button class="red" onclick="solve('dfs')">🧭 Wander (DFS)</button>
+    <button class="gray" onclick="resetSolve()">↺ Clear Solution</button>
+    <label>Speed: <span id="speedLabel">medium</span></label>
+    <input type="range" id="speed" min="1" max="60" value="30" oninput="onSpeed()">
+
+    <details open>
+      <summary>What do the colors mean?</summary>
+      <div class="legend"><span class="swatch" style="background:var(--frontier)"></span> cells the computer is about to check</div>
+      <div class="legend"><span class="swatch" style="background:var(--visited)"></span> cells it has already seen</div>
+      <div class="legend"><span class="swatch" style="background:var(--path)"></span> the shortest path it found</div>
+    </details>
+
+    <details>
+      <summary>How does the computer solve it?</summary>
+      <div class="tip">
+        <p><b>Flood Fill (BFS)</b> spreads out evenly in every direction, like water filling the maze. Because it explores the closest cells first, the moment it reaches the goal it has found the <b>shortest</b> path.</p>
+        <p><b>Wander (DFS)</b> follows one path as far as it can, and only backs up when it hits a dead end. It's fast but the path it finds may be the long way around!</p>
+      </div>
+    </details>
+  </div>
+</div>
+
+<script>
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+let N = 15;              // grid is N x N cells
+let cell = 0;           // pixel size of a cell
+let grid = [];          // grid[y][x] = 1 wall, 0 floor
+let start = {x:1, y:1};
+let goal  = {x:13, y:13};
+let player = {x:1, y:1};
+let tool = 'wall';
+let moves = 0;
+let solving = false;    // lock controls during animation
+let animTimer = null;
+
+const css = getComputedStyle(document.documentElement);
+const COL = {
+  wall:    css.getPropertyValue('--wall').trim(),
+  floor:   css.getPropertyValue('--floor').trim(),
+  start:   css.getPropertyValue('--start').trim(),
+  goal:    css.getPropertyValue('--goal').trim(),
+  player:  css.getPropertyValue('--player').trim(),
+  visited: css.getPropertyValue('--visited').trim(),
+  frontier:css.getPropertyValue('--frontier').trim(),
+  path:    css.getPropertyValue('--path').trim(),
+};
+
+let overlay = [];   // per-cell solver coloring: '', 'visited', 'frontier', 'path'
+
+function inBounds(x, y) { return x >= 0 && y >= 0 && x < N && y < N; }
+
+function blankOverlay() {
+  overlay = Array.from({length: N}, () => Array(N).fill(''));
+}
+
+function setStatus(msg) { document.getElementById('status').textContent = msg; }
+
+// ---------- Maze generation (recursive backtracker) ----------
+function newMaze() {
+  resetSolve();
+  // start fully walled; carve passages on odd cells
+  grid = Array.from({length: N}, () => Array(N).fill(1));
+  const stack = [{x:1, y:1}];
+  grid[1][1] = 0;
+  while (stack.length) {
+    const c = stack[stack.length - 1];
+    // neighbours two cells away
+    const dirs = shuffle([[0,-2],[0,2],[-2,0],[2,0]]);
+    let moved = false;
+    for (const [dx, dy] of dirs) {
+      const nx = c.x + dx, ny = c.y + dy;
+      if (inBounds(nx, ny) && grid[ny][nx] === 1) {
+        grid[ny][nx] = 0;                       // open the neighbour
+        grid[c.y + dy/2][c.x + dx/2] = 0;       // open the wall between
+        stack.push({x:nx, y:ny});
+        moved = true;
+        break;
+      }
+    }
+    if (!moved) stack.pop();
+  }
+  start = {x:1, y:1};
+  goal  = {x: N-2, y: N-2};
+  grid[start.y][start.x] = 0;
+  grid[goal.y][goal.x] = 0;
+  player = {...start};
+  moves = 0;
+  blankOverlay();
+  draw();
+  setStatus("New maze! Reach the red flag 🏁");
+}
+
+function clearGrid() {
+  resetSolve();
+  grid = Array.from({length: N}, () => Array(N).fill(0));
+  // border walls so the player can't leave
+  for (let i = 0; i < N; i++) {
+    grid[0][i] = grid[N-1][i] = grid[i][0] = grid[i][N-1] = 1;
+  }
+  start = {x:1, y:1};
+  goal  = {x: N-2, y: N-2};
+  player = {...start};
+  moves = 0;
+  blankOverlay();
+  draw();
+  setStatus("Empty grid — draw your own walls! ✏️");
+}
+
+function shuffle(a) {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// ---------- Drawing the board ----------
+function draw() {
+  cell = cv.width / N;
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      let c = grid[y][x] ? COL.wall : COL.floor;
+      if (!grid[y][x] && overlay[y][x]) {
+        if (overlay[y][x] === 'visited')  c = COL.visited;
+        if (overlay[y][x] === 'frontier') c = COL.frontier;
+        if (overlay[y][x] === 'path')     c = COL.path;
+      }
+      ctx.fillStyle = c;
+      ctx.fillRect(x*cell, y*cell, cell+0.5, cell+0.5);
+    }
+  }
+  drawDot(start.x, start.y, COL.start);
+  drawDot(goal.x,  goal.y,  COL.goal);
+  // player on top
+  ctx.fillStyle = COL.player;
+  ctx.beginPath();
+  ctx.arc((player.x+0.5)*cell, (player.y+0.5)*cell, cell*0.32, 0, 7);
+  ctx.fill();
+}
+
+function drawDot(x, y, color) {
+  ctx.fillStyle = color;
+  const pad = cell*0.18;
+  ctx.fillRect(x*cell+pad, y*cell+pad, cell-2*pad, cell-2*pad);
+}
+
+// ---------- Player movement ----------
+function move(dx, dy) {
+  if (solving) return;
+  const nx = player.x + dx, ny = player.y + dy;
+  if (inBounds(nx, ny) && grid[ny][nx] === 0) {
+    player.x = nx; player.y = ny;
+    moves++;
+    if (player.x === goal.x && player.y === goal.y) {
+      setStatus(`🎉 You did it in ${moves} moves! 🎉`);
+    } else {
+      setStatus(`Moves: ${moves}`);
+    }
+    draw();
+  }
+}
+
+document.addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  if (['arrowup','w'].includes(k))    { move(0,-1); e.preventDefault(); }
+  if (['arrowdown','s'].includes(k))  { move(0, 1); e.preventDefault(); }
+  if (['arrowleft','a'].includes(k))  { move(-1,0); e.preventDefault(); }
+  if (['arrowright','d'].includes(k)) { move(1, 0); e.preventDefault(); }
+});
+
+// ---------- Drawing tools (mouse / touch) ----------
+let painting = false;
+function setTool(t) {
+  tool = t;
+  ['wall','erase','start','goal'].forEach(n =>
+    document.getElementById('t-'+n).classList.toggle('on', n === t));
+}
+
+function cellFromEvent(e) {
+  const r = cv.getBoundingClientRect();
+  const px = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
+  const py = (e.touches ? e.touches[0].clientY : e.clientY) - r.top;
+  return { x: Math.floor(px / r.width * N), y: Math.floor(py / r.height * N) };
+}
+
+function applyTool(x, y) {
+  if (!inBounds(x, y)) return;
+  resetSolve();
+  if (tool === 'wall')  { if (!(x===start.x&&y===start.y) && !(x===goal.x&&y===goal.y)) grid[y][x] = 1; }
+  if (tool === 'erase') grid[y][x] = 0;
+  if (tool === 'start') { grid[y][x] = 0; start = {x, y}; player = {...start}; moves = 0; }
+  if (tool === 'goal')  { grid[y][x] = 0; goal  = {x, y}; }
+  draw();
+}
+
+cv.addEventListener('mousedown', e => { painting = true; const c = cellFromEvent(e); applyTool(c.x, c.y); });
+cv.addEventListener('mousemove', e => { if (painting && (tool==='wall'||tool==='erase')) { const c = cellFromEvent(e); applyTool(c.x, c.y); } });
+window.addEventListener('mouseup', () => painting = false);
+cv.addEventListener('touchstart', e => { e.preventDefault(); painting = true; const c = cellFromEvent(e); applyTool(c.x, c.y); }, {passive:false});
+cv.addEventListener('touchmove',  e => { e.preventDefault(); if (painting && (tool==='wall'||tool==='erase')) { const c = cellFromEvent(e); applyTool(c.x, c.y); } }, {passive:false});
+window.addEventListener('touchend', () => painting = false);
+
+// ---------- Sliders ----------
+function onSize() {
+  N = parseInt(document.getElementById('size').value);
+  document.getElementById('sizeLabel').textContent = N;
+  newMaze();
+}
+const speedNames = {fast:'fast', medium:'medium', slow:'slow'};
+function onSpeed() {
+  const v = parseInt(document.getElementById('speed').value);
+  document.getElementById('speedLabel').textContent =
+    v > 40 ? 'fast' : v > 15 ? 'medium' : 'slow';
+}
+function stepDelay() {
+  const v = parseInt(document.getElementById('speed').value);
+  return Math.max(4, 70 - v);   // ms between animation frames
+}
+
+// ---------- The solver (the teaching centerpiece) ----------
+function resetSolve() {
+  if (animTimer) { clearInterval(animTimer); animTimer = null; }
+  solving = false;
+  if (overlay.length === N) blankOverlay();
+  if (grid.length === N) draw();
+}
+
+function solve(kind) {
+  if (solving) return;
+  resetSolve();
+  solving = true;
+
+  // BFS uses a queue (check oldest first); DFS uses a stack (check newest first)
+  const frontier = [{...start}];
+  const cameFrom = {};                 // "x,y" -> previous cell, to rebuild the path
+  const seen = Array.from({length:N}, () => Array(N).fill(false));
+  seen[start.y][start.x] = true;
+  const key = (x,y) => x + ',' + y;
+
+  animTimer = setInterval(() => {
+    if (frontier.length === 0) {       // explored everything, no way through
+      clearInterval(animTimer); animTimer = null; solving = false;
+      setStatus("No path exists — the goal is walled off! 🚧");
+      return;
+    }
+    // BFS pops the front (queue); DFS pops the end (stack)
+    const cur = kind === 'bfs' ? frontier.shift() : frontier.pop();
+    if (overlay[cur.y][cur.x] !== 'path') overlay[cur.y][cur.x] = 'visited';
+
+    if (cur.x === goal.x && cur.y === goal.y) {     // reached the goal — trace back
+      clearInterval(animTimer); animTimer = null;
+      let steps = 0, c = cur;
+      while (!(c.x === start.x && c.y === start.y)) {
+        overlay[c.y][c.x] = 'path';
+        c = cameFrom[key(c.x, c.y)];
+        steps++;
+      }
+      overlay[start.y][start.x] = 'path';
+      draw();
+      solving = false;
+      const how = kind === 'bfs' ? 'shortest' : 'a';
+      setStatus(`🤖 Found ${how} path of ${steps} steps!`);
+      return;
+    }
+
+    for (const [dx, dy] of [[0,-1],[0,1],[-1,0],[1,0]]) {
+      const nx = cur.x + dx, ny = cur.y + dy;
+      if (inBounds(nx, ny) && grid[ny][nx] === 0 && !seen[ny][nx]) {
+        seen[ny][nx] = true;
+        cameFrom[key(nx, ny)] = cur;
+        frontier.push({x:nx, y:ny});
+        if (overlay[ny][nx] !== 'path') overlay[ny][nx] = 'frontier';
+      }
+    }
+    draw();
+  }, stepDelay());
+
+  setStatus(kind === 'bfs' ? "🌊 Flooding the maze..." : "🧭 Wandering through...");
+}
+
+// ---------- go ----------
+newMaze();
+</script>
